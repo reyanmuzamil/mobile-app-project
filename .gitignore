@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+**/secrets.json
+**/google-services.json
+**/GoogleService-Info.plist
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/.packages
+supabase/.temp/
+.DS_Store
+.vscode/
+.idea/
