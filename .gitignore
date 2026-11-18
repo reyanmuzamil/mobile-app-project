@@ -13,3 +13,5 @@ supabase/.temp/
 .DS_Store
 .vscode/
 .idea/
+app/android/app/src/main/res/values/strings.xml
+app/android/build/
