@@ -19,3 +19,5 @@ app/android/build/
 .env
 __pycache__/
 *.pyc
+
+.env.json
