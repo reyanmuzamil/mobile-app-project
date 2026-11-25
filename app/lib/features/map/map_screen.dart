@@ -231,6 +231,13 @@ class _MapScreenState extends State<MapScreen> {
     ),
   ];
 
+  void _dismissSearchDropdown() {
+  if (_searchResults.isNotEmpty || FocusScope.of(context).hasFocus) {
+    FocusScope.of(context).unfocus();
+    setState(() => _searchResults = []);
+  }
+}
+
   static final CameraOptions _initialCamera = CameraOptions(
     center: Point(coordinates: Position(74.3132, 31.5880)),
     zoom: 15.8,
@@ -446,7 +453,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _enterLandmarkInspection(_MapLocation location) async {
-    _stopLiveNavigation();
+    _searchDebounce?.cancel();
+    _searchRequestId++;
+    FocusScope.of(context).unfocus();
+    _searchController.clear();
+
     await _setGlowingRouteGeoJson([]);
     setState(() {
       _selectedNavIndex = 0;
@@ -454,6 +465,7 @@ class _MapScreenState extends State<MapScreen> {
       _isInspectionCardCollapsed = false;
       _activeRoute = null;
       _searchResults = [];
+      _isSearching = false;
     });
 
     await _syncAllPinsOnMap();
@@ -657,11 +669,18 @@ class _MapScreenState extends State<MapScreen> {
     String? overrideProfile,
   }) async {
     final profile = overrideProfile ?? _routeProfile;
+    _searchDebounce?.cancel();
+    _searchRequestId++;
+    FocusScope.of(context).unfocus();
+    _searchController.clear();
+
     setState(() {
       _isRouting = true;
       _routeProfile = profile;
       _selectedNavIndex = 0;
       _inspectedLocation = null;
+      _searchResults = [];
+      _isSearching = false;
     });
 
     try {
@@ -1293,6 +1312,7 @@ class _MapScreenState extends State<MapScreen> {
             styleUri: MapboxStyles.STANDARD,
             cameraOptions: _initialCamera,
             onMapCreated: _onMapCreated,
+            onTapListener: (_) => _dismissSearchDropdown(),
             onStyleLoadedListener: (_) async {
               await _applyMapLightPreset(_nightMapMode);
             },
@@ -1303,7 +1323,7 @@ class _MapScreenState extends State<MapScreen> {
           if (_selectedNavIndex == 2 && inspected == null)
             _buildSettingsOverlay(),
 
-          // 3. Top Bar: Live Navigation Banner OR Inspection Header OR Search Pill
+          // 3. Top Bar: Live Navigation Banner OR Inspection Header OR Map Search Pill
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -1311,7 +1331,9 @@ class _MapScreenState extends State<MapScreen> {
                   ? _buildLiveTurnBanner(_activeRoute!)
                   : inspected != null
                       ? _buildInspectionTopBar(inspected)
-                      : _buildSearchTopBar(),
+                      : (_selectedNavIndex == 0
+                          ? _buildSearchTopBar()
+                          : const SizedBox.shrink()),
             ),
           ),
 
@@ -2379,7 +2401,10 @@ class _MapScreenState extends State<MapScreen> {
   }) {
     final bool isSelected = _selectedNavIndex == index;
     return GestureDetector(
-      onTap: () => setState(() => _selectedNavIndex = index),
+      onTap: () {
+        _dismissSearchDropdown();
+        setState(() => _selectedNavIndex = index);
+      },
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -2419,189 +2444,297 @@ class _MapScreenState extends State<MapScreen> {
       ..._customPins,
     ].where((loc) => _bookmarkedIds.contains(loc.id) || loc.isCustom).toList();
 
-    return Container(
-      color: _themeBg.withValues(alpha: 0.96),
-      padding: const EdgeInsets.fromLTRB(20, 110, 20, 100),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Saved Landmarks',
-            style: TextStyle(
-              color: _themeTextPrimary,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Tap any saved landmark to enter Time-Travel Inspection or get directions.',
-            style: TextStyle(color: _themeTextSecondary, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView.separated(
-              itemCount: savedLocations.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final site = savedLocations[index];
-                final accent = site.isCustom ? _customPinAmber : _themeAccent;
-
-                return InkWell(
-                  onTap: () => _enterLandmarkInspection(site),
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: _themeSurface,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: accent.withValues(alpha: 0.25),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: _themeBg,
-                          child: Icon(
-                            site.isCustom
-                                ? Icons.push_pin
-                                : Icons.account_balance,
-                            color: accent,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                site.name,
-                                style: TextStyle(
-                                  color: _themeTextPrimary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                site.subtitle,
-                                style: TextStyle(color: accent, fontSize: 12),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                site.summary,
-                                style: TextStyle(
-                                  color: _themeTextSecondary,
-                                  fontSize: 12,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Get Directions',
-                          icon: Icon(
-                            Icons.directions,
-                            color: _themeRouteAccent,
-                          ),
-                          onPressed: () => _buildRouteToLocation(site),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingsOverlay() {
-    return Container(
-      color: _themeBg.withValues(alpha: 0.96),
-      padding: const EdgeInsets.fromLTRB(20, 110, 20, 100),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Map & Display Settings',
-            style: TextStyle(
-              color: _themeTextPrimary,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            decoration: BoxDecoration(
-              color: _themeSurface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: _themeBorder),
-            ),
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _dismissSearchDropdown,
+      child: Container(
+        color: _themeBg.withValues(alpha: 0.96),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 104),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SwitchListTile(
-                  title: Text(
-                    'Night 3D Map Lighting',
-                    style: TextStyle(color: _themeTextPrimary),
+                Text(
+                  'Saved Landmarks',
+                  style: TextStyle(
+                    color: _themeTextPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.3,
                   ),
-                  subtitle: Text(
-                    'Toggle between Dark Slate (#161925) and Light Mint (#FEFFFE)',
-                    style: TextStyle(color: _themeTextSecondary, fontSize: 12),
-                  ),
-                  activeThumbColor: _themeAccent,
-                  value: _nightMapMode,
-                  onChanged: (val) async {
-                    setState(() => _nightMapMode = val);
-                    await _applyMapLightPreset(val);
-                  },
                 ),
-                Divider(height: 1, color: _themeBorder),
-                SwitchListTile(
-                  title: Text(
-                    '60° 3D Building Perspective',
-                    style: TextStyle(color: _themeTextPrimary),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap a landmark to inspect in 3D or route there.',
+                  style: TextStyle(
+                    color: _themeTextSecondary,
+                    fontSize: 13,
                   ),
-                  subtitle: Text(
-                    'Toggle between pitched 3D view and 2D overhead map',
-                    style: TextStyle(color: _themeTextSecondary, fontSize: 12),
-                  ),
-                  activeThumbColor: _themeAccent,
-                  value: _is3DTilt,
-                  onChanged: (val) async {
-                    setState(() => _is3DTilt = val);
-                    await _mapboxMap?.flyTo(
-                      CameraOptions(pitch: val ? 60.0 : 0.0),
-                      MapAnimationOptions(duration: 700),
-                    );
-                  },
                 ),
-                Divider(height: 1, color: _themeBorder),
-                SwitchListTile(
-                  title: Text(
-                    '3D Ghost Wireframe Layer',
-                    style: TextStyle(color: _themeTextPrimary),
-                  ),
-                  subtitle: Text(
-                    'Show translucent cyan massing for demolished sites',
-                    style: TextStyle(color: _themeTextSecondary, fontSize: 12),
-                  ),
-                  activeThumbColor: _themeRouteAccent,
-                  value: _ghostLayerEnabled,
-                  onChanged: (val) async {
-                    setState(() => _ghostLayerEnabled = val);
-                    await _syncTemporal3DExtrusions();
-                  },
+                const SizedBox(height: 18),
+                Expanded(
+                  child: savedLocations.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No saved landmarks yet.',
+                            style: TextStyle(
+                              color: _themeTextSecondary,
+                              fontSize: 14,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: savedLocations.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final site = savedLocations[index];
+                            final accent =
+                                site.isCustom ? _customPinAmber : _themeAccent;
+
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => _enterLandmarkInspection(site),
+                                borderRadius: BorderRadius.circular(20),
+                                child: Ink(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: _themeSurface,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: _themeBorder,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        width: 44,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          color: _themeBg,
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                          border: Border.all(
+                                            color: accent.withValues(
+                                              alpha: 0.3,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          site.isCustom
+                                              ? Icons.push_pin
+                                              : Icons.account_balance,
+                                          color: accent,
+                                          size: 21,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              site.name,
+                                              style: TextStyle(
+                                                color: _themeTextPrimary,
+                                                fontSize: 15.5,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: accent.withValues(
+                                                  alpha: 0.14,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Text(
+                                                site.subtitle,
+                                                style: TextStyle(
+                                                  color: accent,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              site.summary,
+                                              style: TextStyle(
+                                                color: _themeTextSecondary,
+                                                fontSize: 12,
+                                                height: 1.35,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        tooltip: 'Get Directions',
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: _themeRouteAccent
+                                              .withValues(alpha: 0.14),
+                                        ),
+                                        icon: Icon(
+                                          Icons.directions,
+                                          color: _themeRouteAccent,
+                                          size: 20,
+                                        ),
+                                        onPressed: () =>
+                                            _buildRouteToLocation(site),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+  Widget _buildSettingsOverlay() {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _dismissSearchDropdown,
+      child: Container(
+        color: _themeBg.withValues(alpha: 0.96),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 104),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Map & Display Settings',
+                  style: TextStyle(
+                    color: _themeTextPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Customize map lighting, 3D tilt, and historical overlays.',
+                  style: TextStyle(
+                    color: _themeTextSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  decoration: BoxDecoration(
+                    color: _themeSurface,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _themeBorder),
+                  ),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: Text(
+                          'Night 3D Map Lighting',
+                          style: TextStyle(
+                            color: _themeTextPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Toggle between Dark Slate (#161925) and Light Mint (#FEFFFE)',
+                          style: TextStyle(
+                            color: _themeTextSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        activeThumbColor: _themeAccent,
+                        value: _nightMapMode,
+                        onChanged: (val) async {
+                          setState(() => _nightMapMode = val);
+                          await _applyMapLightPreset(val);
+                        },
+                      ),
+                      Divider(height: 1, color: _themeBorder),
+                      SwitchListTile(
+                        title: Text(
+                          '60° 3D Building Perspective',
+                          style: TextStyle(
+                            color: _themeTextPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Toggle between pitched 3D view and 2D overhead map',
+                          style: TextStyle(
+                            color: _themeTextSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        activeThumbColor: _themeAccent,
+                        value: _is3DTilt,
+                        onChanged: (val) async {
+                          setState(() => _is3DTilt = val);
+                          await _mapboxMap?.flyTo(
+                            CameraOptions(pitch: val ? 60.0 : 0.0),
+                            MapAnimationOptions(duration: 700),
+                          );
+                        },
+                      ),
+                      Divider(height: 1, color: _themeBorder),
+                      SwitchListTile(
+                        title: Text(
+                          '3D Ghost Wireframe Layer',
+                          style: TextStyle(
+                            color: _themeTextPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Show translucent cyan massing for demolished sites',
+                          style: TextStyle(
+                            color: _themeTextSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        activeThumbColor: _themeRouteAccent,
+                        value: _ghostLayerEnabled,
+                        onChanged: (val) async {
+                          setState(() => _ghostLayerEnabled = val);
+                          await _syncTemporal3DExtrusions();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
