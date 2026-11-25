@@ -255,6 +255,7 @@ class _MapScreenState extends State<MapScreen> {
     'lahore_fort',
     'tollinton_exhibition_hall',
   };
+  final Map<String, _MapLocation> _bookmarkedLocations = {};
 
   _MapLocation? _temporarySearchPin;
   final TextEditingController _searchController = TextEditingController();
@@ -489,6 +490,46 @@ class _MapScreenState extends State<MapScreen> {
     await _syncTemporal3DExtrusions();
   }
 
+  Future<void> _setRouteDestinationDot(Position? destination) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+
+    const sourceId = 'she-route-dest-source';
+    const layerId = 'she-route-dest-layer';
+
+    final geoJson = destination == null
+        ? '{"type":"FeatureCollection","features":[]}'
+        : '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[${destination.lng},${destination.lat}]},"properties":{}}]}';
+
+    try {
+      final exists = await map.style.styleSourceExists(sourceId);
+      if (exists) {
+        await map.style.setStyleSourceProperty(sourceId, 'data', geoJson);
+      } else {
+        await map.style.addSource(
+          GeoJsonSource(id: sourceId, data: geoJson),
+        );
+      }
+
+      final layerExists = await map.style.styleLayerExists(layerId);
+      if (!layerExists) {
+        await map.style.addLayer(
+          CircleLayer(
+            id: layerId,
+            sourceId: sourceId,
+            circleRadius: 8.0,
+            circleColor: 0xFF00E5FF,
+            circleStrokeWidth: 3.0,
+            circleStrokeColor: 0xFFFFFFFF,
+            circleEmissiveStrength: 1.0,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Destination dot error: $e');
+    }
+  }
+
   Future<void> _setGlowingRouteGeoJson(List<Position> coords) async {
     final style = _mapboxMap?.style;
     if (style == null) return;
@@ -544,76 +585,16 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _syncAllPinsOnMap() async {
-    final pointManager = _pointAnnotationManager;
-    final style = _mapboxMap?.style;
-    if (pointManager == null || style == null) return;
-
-    await pointManager.deleteAll();
+    await _pointAnnotationManager?.deleteAll();
     _annotationLocationMap.clear();
 
-    const pinSourceId = 'she_pins_source';
-    const pinLayerId = 'she_pins_circles';
-
-    if (await style.styleLayerExists(pinLayerId)) {
-      await style.removeStyleLayer(pinLayerId);
-    }
-    if (await style.styleSourceExists(pinSourceId)) {
-      await style.removeStyleSource(pinSourceId);
+    if (_activeRoute == null) {
+      await _setRouteDestinationDot(null);
+      return;
     }
 
-    final features = [];
-
-    for (final loc in _allLocations) {
-      final bool isActiveDest = _activeRoute?.destination.id == loc.id ||
-          _inspectedLocation?.id == loc.id ||
-          _temporarySearchPin?.id == loc.id;
-
-      features.add({
-        'type': 'Feature',
-        'geometry': {
-          'type': 'Point',
-          'coordinates': [loc.lng, loc.lat],
-        },
-        'properties': {
-          'isDest': isActiveDest,
-        },
-      });
-
-      final annotation = await pointManager.create(
-        PointAnnotationOptions(
-          geometry: Point(coordinates: Position(loc.lng, loc.lat)),
-          textField: isActiveDest ? '📍 ${loc.name}' : loc.name,
-          textOffset: [0.0, -1.5],
-          textSize: 12.5,
-          textColor: _nightMapMode ? 0xFFFFFFFF : 0xFF0F172A,
-          textHaloColor: _nightMapMode ? 0xFF161925 : 0xFFFEFFFE,
-          textHaloWidth: 1.8,
-        ),
-      );
-      _annotationLocationMap[annotation.id] = loc;
-    }
-
-    await style.addSource(
-      GeoJsonSource(
-        id: pinSourceId,
-        data: jsonEncode({
-          'type': 'FeatureCollection',
-          'features': features,
-        }),
-      ),
-    );
-
-    await style.addLayer(
-      CircleLayer(
-        id: pinLayerId,
-        sourceId: pinSourceId,
-        circleColor: 0xFF00E5FF,
-        circleRadius: 8.5,
-        circleStrokeWidth: 2.5,
-        circleStrokeColor: 0xFFFFFFFF,
-        circleEmissiveStrength: 1.0,
-      ),
-    );
+    final dest = _activeRoute!.destination;
+    await _setRouteDestinationDot(Position(dest.lng, dest.lat));
   }
 
   Future<Position?> _resolveUserCoordinates() async {
@@ -763,6 +744,7 @@ class _MapScreenState extends State<MapScreen> {
           .toList();
 
       await _setGlowingRouteGeoJson(routePositions);
+
 
       final isKnownPin =
           _lahoreHeritageSites.any((s) => s.id == destination.id) ||
@@ -1315,6 +1297,7 @@ class _MapScreenState extends State<MapScreen> {
             onTapListener: (_) => _dismissSearchDropdown(),
             onStyleLoadedListener: (_) async {
               await _applyMapLightPreset(_nightMapMode);
+              if (_activeRoute != null) { await _syncAllPinsOnMap(); }
             },
           ),
 
@@ -1827,8 +1810,10 @@ class _MapScreenState extends State<MapScreen> {
                         setState(() {
                           if (isBookmarked) {
                             _bookmarkedIds.remove(location.id);
+                            _bookmarkedLocations.remove(location.id);
                           } else {
                             _bookmarkedIds.add(location.id);
+                            _bookmarkedLocations[location.id] = location;
                           }
                         });
                       },
@@ -2439,10 +2424,14 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Widget _buildSavedOverlay() {
-    final savedLocations = [
-      ..._lahoreHeritageSites,
-      ..._customPins,
-    ].where((loc) => _bookmarkedIds.contains(loc.id) || loc.isCustom).toList();
+    final Map<String, _MapLocation> uniqueSaved = {
+      for (final loc in _lahoreHeritageSites)
+        if (_bookmarkedIds.contains(loc.id)) loc.id: loc,
+      for (final loc in _customPins)
+        if (_bookmarkedIds.contains(loc.id) || loc.isCustom) loc.id: loc,
+      ..._bookmarkedLocations,
+    };
+    final savedLocations = uniqueSaved.values.toList();
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
