@@ -256,7 +256,7 @@ def fetch_pre1900_paintings(landmark_name: str, limit: int = 10) -> list[dict]:
 
     return results[:limit]
 
-
+#runs a geoseafrch within 1000 meters of that landmark 
 def fetch_wikimedia_clean(landmark_name: str, lat: float, lon: float, limit: int = 12) -> list[dict]:
     results = []
     seen_ids = set()
@@ -395,7 +395,7 @@ def fetch_europeana_images(landmark_name: str, rows: int = 12) -> list[dict]:
         })
     return results
 
-
+#FETCHES INFORMATION FROM WIKIOEDIA AND THEN CREATE IT CHUNKS
 def fetch_and_chunk_wikipedia(landmark_name: str, chunk_size: int = 800, overlap: int = 150) -> tuple[str, str, list[dict]]:
     page = wikipedia.page(landmark_name, auto_suggest=True)
     summary = page.summary[:600]
